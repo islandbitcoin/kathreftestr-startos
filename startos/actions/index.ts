@@ -1,5 +1,4 @@
 import { sdk } from '../sdk'
+import { configurePlayback } from './playback'
 
-// Kathreftestr has no node-level secret to surface (stream nsecs are shown in
-// the web UI when a stream goes live), so there are no custom actions.
-export const actions = sdk.Actions.of()
+export const actions = sdk.Actions.of().addAction(configurePlayback)

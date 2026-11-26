@@ -1,0 +1,79 @@
+diff --git a/app/api/start/route.ts b/app/api/start/route.ts
+index 89b0641..ecbfb41 100644
+--- a/app/api/start/route.ts
++++ b/app/api/start/route.ts
+@@ -11,20 +11,12 @@ export async function POST(req: NextRequest) {
+     const { url } = await req.json() as { url?: string };
+     
+     // Validate URL
+-    if (!url || !/^https?:\/\/.+/.test(url)) {
+-      return NextResponse.json(
+-        { error: "Valid YouTube/Twitch URL required." },
+-        { status: 400 }
+-      );
++    if (typeof url !== "string" || !URL.canParse(url)) {
++      return NextResponse.json({ error: "Valid YouTube/Twitch URL required." }, { status: 400 });
+     }
+-
+-    // Check if it's a supported platform
+     const urlObj = new URL(url);
+     if (!sourcePlatform(urlObj)) {
+-      return NextResponse.json(
+-        { error: "Only YouTube and Twitch streams are supported." },
+-        { status: 400 }
+-      );
++      return NextResponse.json({ error: "Only YouTube and Twitch streams are supported." }, { status: 400 });
+     }
+ 
+     // 0) Pull source metadata for attribution (title, channel, thumbnail).
+diff --git a/lib/mirror.ts b/lib/mirror.ts
+index 216c05f..ce5e7af 100644
+--- a/lib/mirror.ts
++++ b/lib/mirror.ts
+@@ -10,8 +10,9 @@ export interface MirrorHandle {
+   startTime: Date;
+ }
+ 
+-// In-memory registry for development
+-const RUNNING = new Map<string, MirrorHandle>();
++// Next.js can load start and stop in separate route bundles in the same process.
++const registry = globalThis as typeof globalThis & { mirrors?: Map<string, MirrorHandle> };
++const RUNNING = registry.mirrors ??= new Map<string, MirrorHandle>();
+ 
+ export interface MirrorOptions {
+   sourceUrl: string;
+@@ -69,7 +70,6 @@ export function startMirror(options: MirrorOptions): MirrorResult {
+       STREAM_URL=$(yt-dlp \
+         --format "best[height<=720]" \
+         --get-url \
+-        --no-check-certificate \
+         "$2" 2>/dev/null || echo "")
+       
+       if [ -n "$STREAM_URL" ]; then
+@@ -114,7 +114,7 @@ export function startMirror(options: MirrorOptions): MirrorResult {
+   // Keep the pipeline fixed. Bash receives the stream inputs as quoted arguments.
+   const proc = spawn("bash", ["-c", command, "mirror", id, options.sourceUrl, quality, rtmpUrl], {
+     stdio: ["ignore", "pipe", "pipe"],
+-    detached: false,
++    detached: true, // Give this stream its own Linux process group.
+     shell: false,
+   });
+ 
+@@ -160,7 +160,7 @@ export function stopMirror(id: string): boolean {
+   if (!handle) return false;
+   
+   try {
+-    handle.proc.kill("SIGTERM");
++    if (handle.proc.pid) process.kill(-handle.proc.pid, "SIGTERM");
+     RUNNING.delete(id);
+     return true;
+   } catch (error) {
+@@ -180,7 +180,7 @@ export function getAllMirrors(): MirrorHandle[] {
+ export function stopAllMirrors(): void {
+   RUNNING.forEach((handle, id) => {
+     try {
+-      handle.proc.kill("SIGTERM");
++      if (handle.proc.pid) process.kill(-handle.proc.pid, "SIGTERM");
+     } catch (error) {
+       console.error(`Failed to stop stream ${id}:`, error);
+     }

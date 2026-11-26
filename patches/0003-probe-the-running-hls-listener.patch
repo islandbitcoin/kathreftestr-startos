@@ -1,0 +1,37 @@
+diff --git a/app/api/health/route.ts b/app/api/health/route.ts
+index c06004c..860fe4c 100644
+--- a/app/api/health/route.ts
++++ b/app/api/health/route.ts
+@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
+ import { exec } from 'child_process';
+ import { promisify } from 'util';
+ 
++export const dynamic = 'force-dynamic';
++
+ const execAsync = promisify(exec);
+ 
+ interface HealthCheck {
+@@ -37,15 +39,15 @@ export async function GET() {
+ 
+   // MediaMTX (HLS server)
+   try {
+-    const res = await fetch('http://localhost:8888/v3/config/get', { signal: AbortSignal.timeout(5000) });
+-    health.checks.mediamtx = res.ok ? 'ok' : 'error';
++    // The control API is disabled. Probe the HLS listener directly without starting a stream.
++    const res = await fetch('http://127.0.0.1:8888/', {
++      method: 'HEAD',
++      cache: 'no-store',
++      signal: AbortSignal.timeout(5000),
++    });
++    health.checks.mediamtx = res.headers.get('server') === 'mediamtx' ? 'ok' : 'error';
+   } catch {
+-    try {
+-      const { stdout } = await execAsync('pgrep -f mediamtx');
+-      health.checks.mediamtx = stdout.trim() ? 'ok' : 'error';
+-    } catch {
+-      health.checks.mediamtx = 'error';
+-    }
++    health.checks.mediamtx = 'error';
+   }
+ 
+   // ffmpeg (transcode) and yt-dlp (extraction) — the pipeline's two tools

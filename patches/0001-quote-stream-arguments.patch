@@ -1,0 +1,137 @@
+diff --git a/app/api/start/route.ts b/app/api/start/route.ts
+index 25571f7..89b0641 100644
+--- a/app/api/start/route.ts
++++ b/app/api/start/route.ts
+@@ -1,3 +1,4 @@
++import { sourcePlatform } from "@/lib/source-platform";
+ import { NextRequest, NextResponse } from "next/server";
+ import { generateKeypair } from "@/lib/keys";
+ import { fetchStreamMeta } from "@/lib/meta";
+@@ -19,10 +20,7 @@ export async function POST(req: NextRequest) {
+ 
+     // Check if it's a supported platform
+     const urlObj = new URL(url);
+-    const isYouTube = urlObj.hostname.includes("youtube.com") || urlObj.hostname.includes("youtu.be");
+-    const isTwitch = urlObj.hostname.includes("twitch.tv");
+-    
+-    if (!isYouTube && !isTwitch) {
++    if (!sourcePlatform(urlObj)) {
+       return NextResponse.json(
+         { error: "Only YouTube and Twitch streams are supported." },
+         { status: 400 }
+diff --git a/lib/mirror.ts b/lib/mirror.ts
+index 63ac61a..216c05f 100644
+--- a/lib/mirror.ts
++++ b/lib/mirror.ts
+@@ -1,3 +1,4 @@
++import { sourcePlatform } from "./source-platform";
+ import { spawn, ChildProcess } from "node:child_process";
+ import crypto from "node:crypto";
+ 
+@@ -52,70 +53,69 @@ export function startMirror(options: MirrorOptions): MirrorResult {
+ 
+   // Try yt-dlp first as it's more reliable for YouTube
+   // Use streamlink as fallback for Twitch
+-  const isYouTube = options.sourceUrl.includes('youtube.com') || options.sourceUrl.includes('youtu.be');
+-  
++  const platform = sourcePlatform(new URL(options.sourceUrl));
++  if (!platform) throw new Error("Unsupported stream source");
++
+   let command: string;
+-  if (isYouTube) {
++  if (platform === "youtube") {
+     // Simplified approach - just try to get it working
+     command = `
+-      echo "[Stream ${id}] Starting YouTube stream handler..."
++      echo "[Stream $1] Starting YouTube stream handler..."
+       
+       # Try the simplest approach first
+-      echo "[Stream ${id}] Attempting direct stream with yt-dlp..."
++      echo "[Stream $1] Attempting direct stream with yt-dlp..."
+       
+       # Get the stream URL once and use it
+       STREAM_URL=$(yt-dlp \
+         --format "best[height<=720]" \
+         --get-url \
+         --no-check-certificate \
+-        "${options.sourceUrl}" 2>/dev/null || echo "")
++        "$2" 2>/dev/null || echo "")
+       
+       if [ -n "$STREAM_URL" ]; then
+-        echo "[Stream ${id}] Successfully got stream URL"
+-        echo "[Stream ${id}] URL: \${STREAM_URL:0:50}..."
++        echo "[Stream $1] Successfully got stream URL"
++        echo "[Stream $1] URL: \${STREAM_URL:0:50}..."
+         
+         # Stream it with ffmpeg
+         ffmpeg -re -i "$STREAM_URL" \
+           -c copy \
+-          -f flv ${rtmpUrl} 2>&1
++          -f flv "$4" 2>&1
+       else
+-        echo "[Stream ${id}] Failed to get YouTube stream URL"
+-        echo "[Stream ${id}] YouTube may be blocking automated access from this server"
+-        echo "[Stream ${id}] Trying alternative: streamlink with YouTube plugin..."
++        echo "[Stream $1] Failed to get YouTube stream URL"
++        echo "[Stream $1] YouTube may be blocking automated access from this server"
++        echo "[Stream $1] Trying alternative: streamlink with YouTube plugin..."
+         
+         # Try streamlink as last resort
+-        streamlink "${options.sourceUrl}" best -O 2>&1 | \
++        streamlink "$2" best -O 2>&1 | \
+           ffmpeg -re -i pipe:0 \
+             -c copy \
+-            -f flv ${rtmpUrl} 2>&1
++            -f flv "$4" 2>&1
+       fi
+       
+-      echo "[Stream ${id}] Stream process ended"
++      echo "[Stream $1] Stream process ended"
+     `.trim();
+   } else {
+     // Use streamlink for Twitch with better error visibility
+     command = `
+       while true; do
+-        echo "[Stream ${id}] Connecting to Twitch stream..."
+-        streamlink --stdout "${options.sourceUrl}" ${quality} \
++        echo "[Stream $1] Connecting to Twitch stream..."
++        streamlink --stdout "$2" "$3" \
+           --retry-streams 30 --retry-max 10 2>&1 | \
+           ffmpeg -re -i pipe:0 \
+             -c:v libx264 -preset ultrafast -tune zerolatency \
+             -c:a aac -b:a 128k \
+-            -f flv ${rtmpUrl} 2>&1
+-        echo "[Stream ${id}] Stream ended, retrying in 10 seconds..."
++            -f flv "$4" 2>&1
++        echo "[Stream $1] Stream ended, retrying in 10 seconds..."
+         sleep 10
+       done
+     `.trim();
+   }
+   
+-  console.log(`[Stream ${id}] Executing command:`, command);
+-  
+-  // Use exec for piped commands instead of spawn
+-  const proc = spawn('bash', ['-c', command], {
++  // Keep the pipeline fixed. Bash receives the stream inputs as quoted arguments.
++  const proc = spawn("bash", ["-c", command, "mirror", id, options.sourceUrl, quality, rtmpUrl], {
+     stdio: ["ignore", "pipe", "pipe"],
+     detached: false,
+-    shell: false,  // Don't use shell since we're already using bash -c
++    shell: false,
+   });
+ 
+   // Log output for debugging
+diff --git a/lib/source-platform.ts b/lib/source-platform.ts
+new file mode 100644
+index 0000000..b7c2191
+--- /dev/null
++++ b/lib/source-platform.ts
+@@ -0,0 +1,7 @@
++export function sourcePlatform(url: URL): 'youtube' | 'twitch' | undefined {
++  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return;
++  const host = url.hostname.toLowerCase();
++  const matches = (domain: string) => host === domain || host.endsWith('.' + domain);
++  if (matches('youtube.com') || matches('youtu.be')) return 'youtube';
++  if (matches('twitch.tv')) return 'twitch';
++}

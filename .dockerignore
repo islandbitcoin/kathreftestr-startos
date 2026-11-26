@@ -1,0 +1,9 @@
+*
+!patches/
+!patches/**
+!upstream-project/
+!upstream-project/**
+upstream-project/.git
+upstream-project/.github
+upstream-project/node_modules
+upstream-project/.next

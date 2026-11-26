@@ -1,9 +1,12 @@
 import { i18n } from './i18n'
 import { sdk } from './sdk'
+import { playbackSettings } from './actions/playback'
 import { uiPort } from './utils'
 
 export const main = sdk.setupMain(async ({ effects }) => {
   console.info(i18n('Starting Kathreftestr…'))
+
+  const playbackUrl = await playbackSettings.read((settings) => settings.url).const(effects)
 
   return sdk.Daemons.of(effects).addDaemon('primary', {
     subcontainer: await sdk.SubContainer.of(
@@ -26,7 +29,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
         // The URL the published Nostr event links to for HLS playback. Defaults
         // to this host; for viewers outside your network, set a publicly
         // reachable URL via the app config / a reverse proxy.
-        HLS_BASE: `http://localhost:${uiPort}/live`,
+        HLS_BASE: playbackUrl || `http://localhost:${uiPort}/live`,
         // Relays to broadcast to (the image has sane defaults when empty).
         NOSTR_RELAYS: '',
       },
